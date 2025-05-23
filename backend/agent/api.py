@@ -529,13 +529,14 @@ async def generate_and_update_project_name(project_id: str, prompt: str):
         db_conn = DBConnection()
         client = await db_conn.client
 
-        model_name = "openai/gpt-4o-mini"
+        model_name = config.MODEL_TO_USE # Use the model specified in .env
+        logger.info(f"Using model from config for project naming: {model_name}")
         system_prompt = "You are a helpful assistant that generates extremely concise titles (2-4 words maximum) for chat threads based on the user's message. Respond with only the title, no other text or punctuation."
         user_message = f"Generate an extremely brief title (2-4 words only) for a chat thread that starts with this message: \"{prompt}\""
         messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_message}]
 
         logger.debug(f"Calling LLM ({model_name}) for project {project_id} naming.")
-        response = await make_llm_api_call(messages=messages, model_name=model_name, max_tokens=20, temperature=0.7)
+        response = await make_llm_api_call(messages=messages, model_name=model_name, max_tokens=20, temperature=0.7) # model_name is now dynamic
 
         generated_name = None
         if response and response.get('choices') and response['choices'][0].get('message'):
@@ -630,6 +631,7 @@ async def initiate_agent_with_files(
         # 3. Create Sandbox
         sandbox_pass = str(uuid.uuid4())
         sandbox = create_sandbox(sandbox_pass, project_id)
+        logger.info(f"Sandbox creation result for project {project_id}: {sandbox}")
         sandbox_id = sandbox.id
         logger.info(f"Created new sandbox {sandbox_id} for project {project_id}")
 
