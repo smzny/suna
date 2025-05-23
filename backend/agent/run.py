@@ -67,7 +67,7 @@ async def run_agent(
     thread_manager.add_tool(SandboxBrowserTool, project_id=project_id, thread_id=thread_id, thread_manager=thread_manager)
     thread_manager.add_tool(SandboxDeployTool, project_id=project_id, thread_manager=thread_manager)
     thread_manager.add_tool(SandboxExposeTool, project_id=project_id, thread_manager=thread_manager)
-    thread_manager.add_tool(MessageTool) # we are just doing this via prompt as there is no need to call it as a tool
+    thread_manager.add_tool(MessageTool) # Intentionally allowing MessageTool to be called like other tools
     thread_manager.add_tool(SandboxWebSearchTool, project_id=project_id, thread_manager=thread_manager)
     thread_manager.add_tool(SandboxVisionTool, project_id=project_id, thread_id=thread_id, thread_manager=thread_manager)
     # Add data providers tool if RapidAPI key is available
@@ -189,9 +189,13 @@ async def run_agent(
         # If we have any content, construct the temporary_message
         if temp_message_content_list:
             temporary_message = {"role": "user", "content": temp_message_content_list}
-            # logger.debug(f"Constructed temporary message with {len(temp_message_content_list)} content blocks.")
+            logger.debug(f"Constructed temporary_message for LLM: {temporary_message}")
+        else:
+            logger.debug("No temporary_message constructed.")
         # ---- End Temporary Message Handling ----
 
+        logger.debug(f"System message for LLM: {system_message}")
+        logger.info(f"Calling thread_manager.run_thread for thread_id: {thread_id}")
         # Set max_tokens based on model
         max_tokens = None
         if "sonnet" in model_name.lower():
@@ -201,7 +205,7 @@ async def run_agent(
             
         try:
             # Make the LLM call and process the response
-            response = await thread_manager.run_thread(
+            response = await thread_manager.run_thread( # THIS IS THE ACTUAL CALL
                 thread_id=thread_id,
                 system_prompt=system_message,
                 stream=stream,
@@ -225,6 +229,7 @@ async def run_agent(
                 reasoning_effort=reasoning_effort,
                 enable_context_manager=enable_context_manager
             )
+            logger.debug(f"Initial response object from run_thread: {response}")
 
             if isinstance(response, dict) and "status" in response and response["status"] == "error":
                 logger.error(f"Error response from run_thread: {response.get('message', 'Unknown error')}")
@@ -238,6 +243,7 @@ async def run_agent(
             error_detected = False
             try:
                 async for chunk in response:
+                    logger.debug(f"Processing response chunk: {chunk}")
                     # If we receive an error chunk, we should stop after this iteration
                     if isinstance(chunk, dict) and chunk.get('type') == 'status' and chunk.get('status') == 'error':
                         logger.error(f"Error chunk detected: {chunk.get('message', 'Unknown error')}")
@@ -258,17 +264,17 @@ async def run_agent(
                             # The actual text content is nested within
                             assistant_text = assistant_content_json.get('content', '')
                             if isinstance(assistant_text, str): # Ensure it's a string
-                                 # Check for the closing tags as they signal the end of the tool usage
-                                if '</ask>' in assistant_text or '</complete>' in assistant_text or '</web-browser-takeover>' in assistant_text:
-                                   if '</ask>' in assistant_text:
-                                       xml_tool = 'ask'
-                                   elif '</complete>' in assistant_text:
+                                 # Check for the closing tags that signal the end of specific non-tool XML constructs
+                                 # Note: '</ask>' is removed from this check, assuming MessageTool.ask() will be called as a regular tool.
+                                if '</complete>' in assistant_text or '</web-browser-takeover>' in assistant_text:
+                                   if '</complete>' in assistant_text:
                                        xml_tool = 'complete'
                                    elif '</web-browser-takeover>' in assistant_text:
                                        xml_tool = 'web-browser-takeover'
+                                   # If other similar non-tool XML constructs are used, they would be handled here.
 
-                                   last_tool_call = xml_tool
-                                   logger.info(f"Agent used XML tool: {xml_tool}")
+                                   last_tool_call = xml_tool # This tracks specific XML constructs, not standard tool calls.
+                                   logger.info(f"Agent output included XML construct: {xml_tool}")
                         except json.JSONDecodeError:
                             # Handle cases where content might not be valid JSON
                             logger.warning(f"Warning: Could not parse assistant content JSON: {chunk.get('content')}")
@@ -281,9 +287,11 @@ async def run_agent(
                 if error_detected:
                     logger.info(f"Stopping due to error detected in response")
                     break
-                    
-                if last_tool_call in ['ask', 'complete', 'web-browser-takeover']:
-                    logger.info(f"Agent decided to stop with tool: {last_tool_call}")
+                
+                # If the agent outputs </complete> or </web-browser-takeover>, it's a signal to stop.
+                # </ask> is no longer handled here; MessageTool.ask() should be used as a standard tool.
+                if last_tool_call in ['complete', 'web-browser-takeover']:
+                    logger.info(f"Agent signaled to stop with construct: {last_tool_call}")
                     continue_execution = False
             except Exception as e:
                 # Just log the error and re-raise to stop all iterations
